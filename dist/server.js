@@ -1,8 +1,9 @@
+import { createServer } from "node:http";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 // create the MCP server
-const server = new McpServer({
+const mcpServer = new McpServer({
     name: "Clinical Trials MCP Server",
     version: "1.0.0",
 });
@@ -12,7 +13,7 @@ const BASE_URL = "https://clinicaltrials.gov/api/v2";
 // Mirrors your "List Studies" concept with:
 // query.cond, query.term, query.locn, filter.overallStatus, pageSize, format, fields, countTotal, pageToken
 //
-server.tool("list_studies", {
+mcpServer.tool("list_studies", {
     cond: z.string().describe("Maps to query.cond. Main condition, e.g. 'breast cancer'."),
     term: z
         .string()
@@ -21,7 +22,7 @@ server.tool("list_studies", {
     locn: z
         .string()
         .optional()
-        .describe("Maps to query.locn. Location text, e.g. 'San Francisco California United States'."),
+        .describe("Maps to query.locn. Location ntext, e.g. 'San Francisco California United States'."),
     overallStatus: z
         .string()
         .optional()
@@ -93,7 +94,7 @@ server.tool("list_studies", {
 // TOOL 2: get_study
 // Mirrors "Get A Study": GET /studies/{nctId}
 //
-server.tool("get_study", {
+mcpServer.tool("get_study", {
     nct_id: z
         .string()
         .describe("NCT ID of the study, e.g. 'NCT04267848'."),
@@ -125,7 +126,7 @@ server.tool("get_study", {
 // TOOL 3: specific_fields_in_study
 // Mirrors "Specific Fields in Study": same endpoint, but requires `fields`.
 //
-server.tool("specific_fields_in_study", {
+mcpServer.tool("specific_fields_in_study", {
     cond: z
         .string()
         .describe("Maps to query.cond. Main condition."),
@@ -179,10 +180,31 @@ server.tool("specific_fields_in_study", {
         ],
     };
 });
-// 5. Start the MCP server over stdio (like the calendar example)
+// Start the MCP server over HTTP so platforms like Render can reach it.
 async function init() {
-    const transport = new StdioServerTransport();
-    await server.connect(transport);
+    const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: undefined,
+    });
+    await mcpServer.connect(transport);
+    const httpServer = createServer(async (req, res) => {
+        try {
+            await transport.handleRequest(req, res);
+        }
+        catch (error) {
+            console.error("Error handling Streamable HTTP request", error);
+            res.writeHead(500).end("Internal Server Error");
+        }
+    });
+    const port = Number(process.env.PORT ?? 7800);
+    await new Promise((resolve) => {
+        httpServer.listen(port, () => {
+            console.log(`Clinical Trials MCP server listening on port ${port}`);
+            resolve();
+        });
+    });
 }
-init();
+init().catch((err) => {
+    console.error("Failed to start MCP server", err);
+    process.exit(1);
+});
 //# sourceMappingURL=server.js.map
